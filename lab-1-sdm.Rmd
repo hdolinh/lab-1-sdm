@@ -1,0 +1,264 @@
+---
+title: "Lab 1 SDM"
+author: "Halina Do-Linh"
+date: "1/5/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Required Packages
+```{r}
+# load packages, installing if missing
+if (!require(librarian)){
+  install.packages("librarian")
+  library(librarian)
+}
+librarian::shelf(
+  dismo, dplyr, DT, ggplot2, here, htmltools, leaflet, mapview, purrr, raster, readr, rgbif, rgdal, rJava, sdmpredictors, sf, spocc, tidyr, ggally)
+select <- dplyr::select # overwrite raster::select
+options(readr.show_col_types = FALSE)
+
+# set random seed for reproducibility
+set.seed(42)
+
+# directory to store data
+dir_data <- here("data/sdm")
+dir.create(dir_data, showWarnings = F)
+```
+
+# 2.3 Get Species Observations
+
+```{r}
+obs_csv <- file.path(dir_data, "obs.csv")
+obs_geo <- file.path(dir_data, "obs.geojson")
+redo    <- FALSE
+
+if (!file.exists(obs_geo) | redo){
+  # get species occurrence data from GBIF with coordinates
+  (res <- spocc::occ(
+    query = 'Canis latrans', 
+    from = 'gbif', 
+    has_coords = T,
+    limit = 10000))
+  
+  # extract data frame from result
+  df <- res$gbif$data[[1]] 
+  readr::write_csv(df, obs_csv)
+  
+  # convert to points of observation from lon/lat columns in data frame
+  obs <- df %>% 
+    sf::st_as_sf(
+      coords = c("longitude", "latitude"),
+      crs = st_crs(4326)) %>% 
+    select(prov, key) # save space (joinable from obs_csv)
+  sf::write_sf(obs, obs_geo, delete_dsn=T)
+}
+obs <- sf::read_sf(obs_geo)
+nrow(obs) # number of rows
+```
+
+## Show points on map
+
+```{r}
+mapview::mapview(obs, map.types = "Esri.WorldImagery")
+```
+
+## Questions
+
+**1. There are 37,929 total observations of *Canis latrans* in the GBIF database.**
+
+```{r}
+ spocc::occ(
+    query = 'Canis latrans', 
+    from = 'gbif', 
+    has_coords = T,
+    limit = 10000)
+```
+
+**2. Visually, I do not see any odd observations. All observations are within the North American continent, which is the appropriate range for *Canis latrans*. However, when I zoomed into water regions such as the Great Lakes or the Gulf of St. Lawrence by Newfoundland - I saw some observations were in the water near the shore. At first I thought this was odd, but further research showed that *Canis latrans* are excellent swimmers and often swim about 0.5 miles off shore, and up to 7 or 8 miles in total. (Fun fact: *Canis latrans* have webbed feet!) All water observations were within this limit and so I did not consider them odd and left them as is.**
+
+
+# 2.4 Get Environmental Data
+
+```{r}
+dir_env <- file.path(dir_data, "env")
+
+# set a default data directory
+options(sdmpredictors_datadir = dir_env)
+
+# choosing terrestrial
+env_datasets <- sdmpredictors::list_datasets(terrestrial = TRUE, marine = FALSE)
+
+# show table of datasets
+env_datasets %>% 
+  select(dataset_code, description, citation) %>% 
+  DT::datatable()
+```
+
+```{r}
+# choose datasets for a vector
+env_datasets_vec <- c("WorldClim", "ENVIREM")
+
+# get layers
+env_layers <- sdmpredictors::list_layers(env_datasets_vec)
+DT::datatable(env_layers)
+```
+
+
+```{r}
+# choose layers after some inspection and perhaps consulting literature
+env_layers_vec <- c("WC_alt", "WC_bio1", "WC_bio2", "ER_tri", "ER_topoWet")
+
+# get layers
+env_stack <- load_layers(env_layers_vec)
+
+# interactive plot layers, hiding all but first (select others)
+# mapview(env_stack, hide = T) # makes the html too big for Github
+plot(env_stack, nc=2)
+```
+
+## Creating a convex hull for study area
+
+```{r}
+obs_hull_geo  <- file.path(dir_data, "obs_hull.geojson")
+env_stack_grd <- file.path(dir_data, "env_stack.grd")
+
+if (!file.exists(obs_hull_geo) | redo){
+  # make convex hull around points of observation
+  obs_hull <- sf::st_convex_hull(st_union(obs))
+  
+  # save obs hull
+  write_sf(obs_hull, obs_hull_geo)
+}
+obs_hull <- read_sf(obs_hull_geo)
+
+# show points on map
+mapview(
+  list(obs, obs_hull))
+```
+
+Used convex hull on chosen environmental layers.
+
+```{r}
+if (!file.exists(env_stack_grd) | redo){
+  obs_hull_sp <- sf::as_Spatial(obs_hull)
+  env_stack <- raster::mask(env_stack, obs_hull_sp) %>% 
+    raster::crop(extent(obs_hull_sp))
+  writeRaster(env_stack, env_stack_grd, overwrite=T)  
+}
+env_stack <- stack(env_stack_grd)
+
+# show map
+# mapview(obs) + 
+#   mapview(env_stack, hide = T) # makes html too big for Github
+plot(env_stack, nc=2)
+```
+# 2.4.2 Pseudo-Absence 
+
+Based on convex hull, create a mask of region of interest and then generate random points inside mask.
+
+```{r}
+absence_geo <- file.path(dir_data, "absence.geojson")
+pts_geo     <- file.path(dir_data, "pts.geojson")
+pts_env_csv <- file.path(dir_data, "pts_env.csv")
+
+if (!file.exists(absence_geo) | redo){
+  # get raster count of observations
+  r_obs <- rasterize(
+    sf::as_Spatial(obs), env_stack[[1]], field=1, fun='count')
+  
+  # show map
+  # mapview(obs) + 
+  #   mapview(r_obs)
+  
+  # create mask for 
+  r_mask <- mask(env_stack[[1]] > -Inf, r_obs, inverse=T)
+  
+  # generate random points inside mask
+  absence <- dismo::randomPoints(r_mask, nrow(obs)) %>% 
+    as_tibble() %>% 
+    st_as_sf(coords = c("x", "y"), crs = 4326)
+  
+  write_sf(absence, absence_geo, delete_dsn=T)
+}
+absence <- read_sf(absence_geo)
+
+# show map of presence, ie obs, and absence
+mapview(obs, col.regions = "green") + 
+  mapview(absence, col.regions = "gray")
+```
+
+Create a data table that will feed into the SDM where:
+
+- `y` is the `present` column with values of 1 (present) or 0 (absent).
+- `x` is all other columns.
+
+```{r}
+if (!file.exists(pts_env_csv) | redo){
+
+  # combine presence and absence into single set of labeled points 
+  pts <- rbind(
+    obs %>% 
+      mutate(
+        present = 1) %>% 
+      select(present, key),
+    absence %>% 
+      mutate(
+        present = 0,
+        key     = NA)) %>% 
+    mutate(
+      ID = 1:n()) %>% 
+    relocate(ID)
+  write_sf(pts, pts_geo, delete_dsn=T)
+
+  # extract raster values for points
+  pts_env <- raster::extract(env_stack, as_Spatial(pts), df=TRUE) %>% 
+    tibble() %>% 
+    # join present and geometry columns to raster value results for points
+    left_join(
+      pts %>% 
+        select(ID, present),
+      by = "ID") %>% 
+    relocate(present, .after = ID) %>% 
+    # extract lon, lat as single columns
+    mutate(
+      #present = factor(present),
+      lon = st_coordinates(geometry)[,1],
+      lat = st_coordinates(geometry)[,2]) %>% 
+    select(-geometry)
+  write_csv(pts_env, pts_env_csv)
+}
+pts_env <- read_csv(pts_env_csv)
+
+pts_env %>% 
+  # show first 10 presence, last 10 absence
+  slice(c(1:10, (nrow(pts_env)-9):nrow(pts_env))) %>% 
+  DT::datatable(
+    rownames = F,
+    options = list(
+      dom = "t",
+      pageLength = 20))
+```
+# 2.5 Term Plots
+
+```{r}
+pts_env %>% 
+  select(-ID) %>% 
+  mutate(
+    present = factor(present)) %>% 
+  pivot_longer(-present) %>% 
+  ggplot() +
+  geom_density(aes(x = value, fill = present)) + 
+  scale_fill_manual(values = alpha(c("gray", "green"), 0.5)) +
+  scale_x_continuous(expand=c(0,0)) +
+  scale_y_continuous(expand=c(0,0)) +
+  theme_bw() + 
+  facet_wrap(~name, scales = "free") +
+  theme(
+    legend.position = c(1, 0),
+    legend.justification = c(1, 0))
+```
+

@@ -1,0 +1,170 @@
+---
+title: "Lab 1 SDM Part 2"
+author: "Halina Do-Linh"
+date: "1/6/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Explore continued 
+
+```{r}
+librarian::shelf(
+  DT, dplyr, dismo, GGally, here, readr, tidyr)
+select <- dplyr::select # overwrite raster::select
+options(readr.show_col_types = F)
+
+dir_data    <- here("data/sdm")
+pts_env_csv <- file.path(dir_data, "pts_env.csv")
+
+pts_env <- read_csv(pts_env_csv)
+nrow(pts_env)
+```
+
+```{r}
+datatable(pts_env, rownames = F)
+```
+
+Creating pairs plots using `GGally` to show correlations between variables.
+
+```{r}
+GGally::ggpairs(
+  select(pts_env, -ID),
+  aes(color = factor(present)))
+```
+
+# 2.1 Setup Data
+
+```{r}
+# setup model data
+d <- pts_env %>% 
+  select(-ID) %>%  # remove terms we don't want to model
+  tidyr::drop_na() # drop the rows with NA values
+nrow(d)
+```
+
+# 2.2 Linear Model
+
+```{r}
+# fit a linear model
+mdl <- lm(present ~ ., data = d)
+summary(mdl)
+```
+
+
+```{r}
+y_predict <- predict(mdl, pts_env, type="response")
+y_true    <- pts_env$present
+
+range(y_predict)
+```
+
+
+```{r}
+range(y_true)
+```
+
+The problem with these predictions is that it ranges outside the possible values of present 1 and absent 0. (Later we’ll deal with converting values within this range to either 1 or 0 by applying a cutoff value; i.e. any values > 0.5 become 1 and below become 0.)
+
+**Halina note: also my adjusted r squared is pretty small?**
+
+# 2.3 Generalized Linear Model
+
+```{r}
+# fit a generalized linear model with a binomial logit link function
+mdl <- glm(present ~ ., family = binomial(link="logit"), data = d)
+summary(mdl)
+```
+
+
+```{r}
+y_predict <- predict(mdl, d, type="response")
+
+range(y_predict)
+```
+
+Excellent, our response is now constrained between 0 and 1. Next, let’s look at the term plots to see the relationship between predictor and response.
+
+```{r}
+# show term plots
+termplot(mdl, partial.resid = TRUE, se = TRUE, main = F)
+```
+
+
+# 2.4 Generalized Additive Model
+
+```{r}
+librarian::shelf(mgcv)
+
+# fit a generalized additive model with smooth predictors
+mdl <- mgcv::gam(
+  formula = present ~ s(WC_alt) + s(WC_bio1) + 
+    s(WC_bio2) + s(ER_tri) + s(ER_topoWet) + s(lon) + s(lat), 
+  family = binomial, data = d)
+summary(mdl)
+```
+
+**Halina note: well my adjusted r squared definitely increased!**
+
+
+```{r}
+# show term plots
+plot(mdl, scale=0)
+```
+
+# 2.5 Maxtent (maximum entropy)
+
+```{r}
+# load extra packages
+librarian::shelf(
+  maptools, sf)
+
+# show version of maxent
+maxent()
+```
+
+```{r}
+# get environmental rasters
+# NOTE: the first part of Lab 1. SDM - Explore got updated to write this clipped environmental raster stack
+env_stack_grd <- file.path(dir_data, "env_stack.grd")
+env_stack <- stack(env_stack_grd)
+plot(env_stack, nc=2)
+```
+
+
+```{r}
+# get presence-only observation points (maxent extracts raster values for you)
+obs_geo <- file.path(dir_data, "obs.geojson")
+obs_sp <- read_sf(obs_geo) %>% 
+  sf::as_Spatial() # maxent prefers sp::SpatialPoints over newer sf::sf class
+
+# fit a maximum entropy model
+mdl <- maxent(env_stack, obs_sp)
+```
+
+
+**Halina notes: I'm concerned about this warning - I thought I got rid of the NA's?**
+
+```{r}
+# plot variable contributions per predictor
+plot(mdl)
+```
+
+
+```{r}
+# plot term plots
+response(mdl)
+```
+
+```{r}
+# predict
+y_predict <- predict(env_stack, mdl) #, ext=ext, progress='')
+
+plot(y_predict, main='Maxent, raw prediction')
+data(wrld_simpl, package="maptools")
+plot(wrld_simpl, add=TRUE, border='dark grey')
+```
+
