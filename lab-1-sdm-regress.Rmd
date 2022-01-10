@@ -1,5 +1,5 @@
 ---
-title: "Lab 1 SDM Part 2"
+title: "Lab 1 SDM Logistic Regression"
 author: "Halina Do-Linh"
 date: "1/6/2022"
 output: html_document
