@@ -29,6 +29,7 @@ datatable(pts_env, rownames = F)
 ```
 
 Creating pairs plots using `GGally` to show correlations between variables.
+**Halina notes: consider dropping `ER_topoWet` and `ER_tri`**
 
 ```{r}
 GGally::ggpairs(
@@ -54,10 +55,11 @@ mdl <- lm(present ~ ., data = d)
 summary(mdl)
 ```
 
+**Halina notes: `predict()` is creating a RasterLayer with a prediction based on a model, not 100% sure what the type argument is doing but I know we want the `y-predict` to be our response or y-values. But basically this is the part where we are running the logit regression so that our range is constrained between 0 and 1. We don't want predictions outside of this range.**
 
 ```{r}
-y_predict <- predict(mdl, pts_env, type="response")
-y_true    <- pts_env$present
+y_predict <- predict(mdl, d, type="response")
+y_true    <- d$present
 
 range(y_predict)
 ```
@@ -152,7 +154,7 @@ mdl <- maxent(env_stack, obs_sp)
 # plot variable contributions per predictor
 plot(mdl)
 ```
-
+**Halina Notes: interesting that ER_tri and ER_topoWet contribute the least to each predictor because they are also variables I would consider removing since their correlation number was greater than 0.7.**
 
 ```{r}
 # plot term plots
