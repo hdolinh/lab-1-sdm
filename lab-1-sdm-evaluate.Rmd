@@ -9,22 +9,87 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-## R Markdown
+# Setup
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+```{r}
+# global knitr chunk options
+knitr::opts_chunk$set(
+  warning = FALSE, 
+  message = FALSE)
 
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+# load packages
+librarian::shelf(
+  dismo, # species distribution modeling: maxent(), predict(), evaluate(), 
+  dplyr, ggplot2, GGally, here, maptools, readr, 
+  raster, readr, rsample, sf,
+  usdm)  # uncertainty analysis for species distribution models: vifcor()
+select = dplyr::select
 
-```{r cars}
-summary(cars)
+# options
+set.seed(42)
+options(
+  scipen = 999,
+  readr.show_col_types = F)
+ggplot2::theme_set(ggplot2::theme_light())
+
+# paths
+dir_data      <- here("data/sdm")
+pts_geo       <- file.path(dir_data, "pts.geojson")
+env_stack_grd <- file.path(dir_data, "env_stack.grd")
+mdl_maxv_rds  <- file.path(dir_data, "mdl_maxent_vif.rds")
+
+# read points of observation: presence (1) and absence (0)
+pts <- read_sf(pts_geo)
+
+# read raster stack of environment
+env_stack <- raster::stack(env_stack_grd)
 ```
 
-## Including Plots
 
-You can also embed plots, for example:
+# 1.1 Split observations into training and testing 
 
-```{r pressure, echo=FALSE}
-plot(pressure)
+```{r}
+# create training set with 80% of full data
+pts_split  <- rsample::initial_split(
+  pts, prop = 0.8, strata = "present")
+pts_train  <- rsample::training(pts_split)
+pts_test   <- rsample::testing(pts_split)
+
+pts_train_p <- pts_train %>% 
+  filter(present == 1) %>% 
+  as_Spatial()
+pts_train_a <- pts_train %>% 
+  filter(present == 0) %>% 
+  as_Spatial()
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+# 2 Calibrate: Model Selection
+
+```{r}
+# show pairs plot before multicollinearity reduction with vifcor()
+pairs(env_stack)
+```
+
+```{r}
+# calculate variance inflation factor per predictor, a metric of multicollinearity between variables
+vif(env_stack)
+```
+
+```{r}
+# stepwise reduce predictors, based on a max correlation of 0.7 (max 1)
+v <- vifcor(env_stack, th=0.7) 
+v
+```
+
+**Halina Notes: One variable has a collinearity problem:**
+
+**- `ER_tri`**
+
+**After excluding the collinear variable, the linear correlation coefficients ranges between:**
+
+- min correlation ()
+
+```{r}
+min
+```
+
