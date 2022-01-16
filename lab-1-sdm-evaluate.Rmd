@@ -111,3 +111,76 @@ mdl_maxv <- read_rds(mdl_maxv_rds)
 plot(mdl_maxv)
 ```
 
+```{r}
+# plot term plots
+response(mdl_maxv)
+```
+
+
+```{r}
+# predict
+y_maxv <- predict(env_stack, mdl_maxv) #, ext=ext, progress='')
+
+plot(y_maxv, main='Maxent, raw prediction')
+data(wrld_simpl, package="maptools")
+plot(wrld_simpl, add=TRUE, border='dark grey')
+```
+
+
+# 3 Evaluate: Model Performance
+
+## 3.1 Area Under the Curve (AUC), Reciever Operator Characteristics (ROC) Curve and Confusion Matrix
+
+```{r}
+pts_test_p <- pts_test %>% 
+  filter(present == 1) %>% 
+  as_Spatial()
+pts_test_a <- pts_test %>% 
+  filter(present == 0) %>% 
+  as_Spatial()
+
+y_maxv <- predict(mdl_maxv, env_stack)
+#plot(y_maxv)
+
+e <- dismo::evaluate(
+  p     = pts_test_p,
+  a     = pts_test_a, 
+  model = mdl_maxv,
+  x     = env_stack)
+e
+```
+
+
+```{r}
+plot(e, 'ROC')
+# add point to ROC plot
+points(fpr, tpr, pch=23, bg="blue")
+
+thr <- threshold(e)[['spec_sens']]
+thr
+```
+
+
+```{r}
+p_true <- na.omit(raster::extract(y_maxv, pts_test_p) >= thr)
+a_true <- na.omit(raster::extract(y_maxv, pts_test_a) < thr)
+
+# (t)rue/(f)alse (p)ositive/(n)egative rates
+tpr <- sum(p_true)/length(p_true)
+fnr <- sum(!p_true)/length(p_true)
+fpr <- sum(!a_true)/length(a_true)
+tnr <- sum(a_true)/length(a_true)
+
+matrix(
+  c(tpr, fnr,
+    fpr, tnr), 
+  nrow=2, dimnames = list(
+    c("present_obs", "absent_obs"),
+    c("present_pred", "absent_pred")))
+```
+
+
+```{r}
+plot(y_maxv > thr)
+```
+
