@@ -153,11 +153,12 @@ e
 
 ```{r}
 plot(e, 'ROC')
-# add point to ROC plot
-points(fpr, tpr, pch=23, bg="blue")
 
 thr <- threshold(e)[['spec_sens']]
 thr
+
+# add point to ROC plot
+# points(fpr, tpr, pch=23, bg="blue")
 ```
 
 
