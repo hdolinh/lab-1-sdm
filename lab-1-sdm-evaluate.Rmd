@@ -85,11 +85,29 @@ v
 
 **- `ER_tri`**
 
-**After excluding the collinear variable, the linear correlation coefficients ranges between:**
+**After excluding `ER_tri`, the linear correlation coefficients ranges between:**
 
-- min correlation ()
+**- min correlation (`WC_bio2` ~ `ER_topoWet`): 0.009**
+**- max correlation (`WC_alt` ~ `ER_topoWet`): 0.56**
+
 
 ```{r}
-min
+# reduce enviromental raster stack by 
+env_stack_v <- usdm::exclude(env_stack, v)
+
+# show pairs plot after multicollinearity reduction with vifcor()
+pairs(env_stack_v)
+```
+
+```{r}
+# fit a maximum entropy model
+if (!file.exists(mdl_maxv_rds)){
+  mdl_maxv <- maxent(env_stack_v, sf::as_Spatial(pts_train))
+  readr::write_rds(mdl_maxv, mdl_maxv_rds)
+}
+mdl_maxv <- read_rds(mdl_maxv_rds)
+
+# plot variable contributions per predictor
+plot(mdl_maxv)
 ```
 
