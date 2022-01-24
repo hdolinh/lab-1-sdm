@@ -1,12 +1,159 @@
 ---
 title: "Lab 1 Species Distribution Modeling"
 author: "Halina Do-Linh"
-date: "1/24/2022"
-output: html_document
+date: '`r format(Sys.time(), "%m/%d/%Y")`'
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    code_folding: show
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-# 
+# Overview
+For this machine learning lab, I am using the species *Canis latrans* to predict presence from observations and environmental data. There are five parts to this lab:
+
+- [Explore](#Lab_1a:_Explore)
+- Regress
+- Trees
+- Evaluate
+
+![Canis Latrans in grassland habitat. Source [Gerald and Buff Corsi](https://calphotos.berkeley.edu/cgi/photographer_query?where-name_full=Gerald+and+Buff+Corsi&one=T)](images/canis-latrans.jpeg)
+
+```{r, include=FALSE, warning=FALSE, message=FALSE}
+# load packages, installing if missing
+if (!require(librarian)){
+  install.packages("librarian")
+  library(librarian)
+}
+librarian::shelf(
+  dismo, 
+  dplyr, 
+  DT, 
+  ggplot2, 
+  here, 
+  htmltools, 
+  leaflet, 
+  mapview, 
+  purrr, 
+  raster, 
+  readr, 
+  rgbif, 
+  rgdal, 
+  rJava, 
+  sdmpredictors, 
+  sf, 
+  spocc, 
+  tidyr, 
+  GGally)
+select <- dplyr::select # overwrite raster::select
+options(readr.show_col_types = FALSE)
+
+# set random seed for reproducibility
+set.seed(42)
+
+# directory to store data
+dir_data <- here("data/sdm")
+dir.create(dir_data, showWarnings = F)
+```
+
+
+# Lab 1a: Explore
+
+## Get *Canis latrans* observations from [GBIF](https://www.gbif.org/)
+
+```{r, warning=FALSE, message=FALSE}
+obs_csv <- file.path(dir_data, "obs.csv")
+obs_geo <- file.path(dir_data, "obs.geojson")
+redo    <- FALSE
+
+if (!file.exists(obs_geo) | redo){
+  # get species occurrence data from GBIF with coordinates
+  (res <- spocc::occ(
+    query = 'Canis latrans', 
+    from = 'gbif', 
+    has_coords = T,
+    limit = 10000))
+  
+  # extract data frame from result
+  df <- res$gbif$data[[1]] 
+  readr::write_csv(df, obs_csv)
+  
+  # convert to points of observation from lon/lat columns in data frame
+  obs <- df %>% 
+    sf::st_as_sf(
+      coords = c("longitude", "latitude"),
+      crs = st_crs(4326)) %>% 
+    select(prov, key) # save space (joinable from obs_csv)
+  sf::write_sf(obs, obs_geo, delete_dsn=T)
+}
+obs <- sf::read_sf(obs_geo)
+nrow(obs) # number of rows
+```
+
+## Map of distribution of points
+
+```{r}
+# show points on map
+mapview::mapview(obs, map.types = "Esri.WorldImagery")
+```
+
+## Get environmental data
+
+```{r}
+dir_env <- file.path(dir_data, "env")
+
+# set a default data directory
+options(sdmpredictors_datadir = dir_env)
+
+# choosing terrestrial
+env_datasets <- sdmpredictors::list_datasets(terrestrial = TRUE, marine = FALSE)
+
+# show table of datasets
+env_datasets %>% 
+  select(dataset_code, description, citation) %>% 
+  DT::datatable()
+```
+
+
+```{r}
+# choose datasets for a vector
+env_datasets_vec <- c("WorldClim", "ENVIREM")
+
+# get layers
+env_layers <- sdmpredictors::list_layers(env_datasets_vec)
+DT::datatable(env_layers)
+```
+
+
+```{r}
+# choose layers after some inspection and perhaps consulting literature
+env_layers_vec <- c("WC_alt", "WC_bio1", "WC_bio2", "ER_tri", "ER_topoWet")
+
+# get layers
+env_stack <- load_layers(env_layers_vec)
+
+# interactive plot layers, hiding all but first (select others)
+# mapview(env_stack, hide = T) # makes the html too big for Github
+plot(env_stack, nc=2)
+```
+
+## Questions
+
+1. How many observations total are in GBIF for your species?
+
+**There are 37,929 total observations of *Canis latrans* in the GBIF database.**
+
+2. Did you have to perform any data cleaning steps?
+
+**I did not have to perform any data cleaning steps. At first visually, I do not see any odd observations. All observations were within the North American continent, which is the appropriate range for *Canis latrans*. However, when I zoomed into water regions such as the Great Lakes or the Gulf of St. Lawrence by Newfoundland - I saw some observations were in the water near the shore. At first I thought this was odd, but further research showed that *Canis latrans* are excellent swimmers and often swim about 0.5 miles off shore, and up to 7 or 8 miles in total. (Fun fact: *Canis latrans* have webbed feet!) All water observations appeared to be within 0.5 miles off shore and so I did not consider them odd and left them as is.**
+
+3. What environmental layers did you choose as predictors? Can you find any support for these in the literature?
+
+I chose LIST OF LAYERS from the `WorldClim` and `ENVIREM` data sets. I found the `WorldClim` and `ENVIREM` data sets using `sdmpredictors` `list_datasets` based on the criteria of terrestrial and excluded data sets related to marine environments. 
+
+WorldClim is a set of global climate layers (climate grids)
+ENVIREM is a dataset of 16 climatic and 2 topographical variables for SDM.
