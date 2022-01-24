@@ -143,19 +143,19 @@ plot(env_stack, nc=2)
 
 ## Questions
 
-1. How many observations total are in GBIF for your species?
+How many observations total are in GBIF for your species?
 
-| **Answer:** There are 37,929 total observations of *Canis latrans* in the GBIF database.
+**Answer:** There are 37,929 total observations of *Canis latrans* in the GBIF database.
 
-2. Did you have to perform any data cleaning steps?
+Did you have to perform any data cleaning steps?
 
-| **Answer:** I did not have to perform any data cleaning steps. At first visually, I do not see any odd observations. All observations were within the North American continent, which is the appropriate range for *Canis latrans*. However, when I zoomed into water regions such as the Great Lakes or the Gulf of St. Lawrence by Newfoundland - I saw some observations were in the water near the shore. At first I thought this was odd, but further research showed that *Canis latrans* are excellent swimmers and often swim about 0.5 miles off shore, and up to 7 or 8 miles in total. (Fun fact: *Canis latrans* have webbed feet!) All water observations appeared to be within 0.5 miles off shore and so I did not consider them odd and left them as is.
+**Answer:** I did not have to perform any data cleaning steps. At first visually, I do not see any odd observations. All observations were within the North American continent, which is the appropriate range for *Canis latrans*. However, when I zoomed into water regions such as the Great Lakes or the Gulf of St. Lawrence by Newfoundland - I saw some observations were in the water near the shore. At first I thought this was odd, but further research showed that *Canis latrans* are excellent swimmers and often swim about 0.5 miles off shore, and up to 7 or 8 miles in total. (Fun fact: *Canis latrans* have webbed feet!) All water observations appeared to be within 0.5 miles off shore and so I did not consider them odd and left them as is.
 
-3. What environmental layers did you choose as predictors? Can you find any support for these in the literature?
+What environmental layers did you choose as predictors? Can you find any support for these in the literature?
 
-| **Answer:** I chose `WC_alt`, `WC_bio1`, `WC_bio12`, `ER_tri`, and `ER_topoWet` from the `WorldClim` and `ENVIREM` data sets. I found the `WorldClim` and `ENVIREM` data sets using `sdmpredictors` `list_datasets` based on the criteria of terrestrial and excluded data sets related to marine environments.
+**Answer:** I chose `WC_alt`, `WC_bio1`, `WC_bio12`, `ER_tri`, and `ER_topoWet` from the `WorldClim` and `ENVIREM` data sets. I found the `WorldClim` and `ENVIREM` data sets using `sdmpredictors` `list_datasets` based on the criteria of terrestrial and excluded data sets related to marine environments.
 
-| Canis latrans* can be found in many different types of habitats such as forests, prairie, mountains, and even agriculture or urban areas. I chose predictors like altitude, annual mean temperature, annual precipitation, terrain roughness index, and topographic wetness to accommodate for the wide variety of habitats that *Canis latrans* can be found in.
+*Canis latrans* can be found in many different types of habitats such as forests, prairie, mountains, and even agriculture or urban areas. I chose predictors like altitude, annual mean temperature, annual precipitation, terrain roughness index, and topographic wetness to accommodate for the wide variety of habitats that *Canis latrans* can be found in (1, 2, 3).
 
 ## Convex hull based on *Canis latrans* observation points
 
@@ -300,4 +300,177 @@ pts_env %>%
     legend.position = c(1, 0),
     legend.justification = c(1, 0))
 ```
+
+
+# Lab 1b: Regress
+
+```{r, include=FALSE, warning=FALSE, message=FALSE}
+pts_env <- read_csv(pts_env_csv)
+nrow(pts_env)
+
+datatable(pts_env, rownames = F)
+```
+
+## Pairs plots using `GGally` 
+
+The pairs plots shows correlations between variables. Based on these plots I would consider dropping `ER_topoWet` and `ER_tri` because they are highly correlated with `WC_bio1`.
+
+```{r, warning=FALSE}
+GGally::ggpairs(
+  select(pts_env, -ID),
+  aes(color = factor(present)))
+```
+
+## Linear Model
+
+```{r, message=FALSE}
+# setup model data
+d <- pts_env %>% 
+  select(-ID) %>%  # remove terms we don't want to model
+  tidyr::drop_na() # drop the rows with NA values
+nrow(d)
+```
+
+
+```{r}
+# fit a linear model
+mdl <- lm(present ~ ., data = d)
+summary(mdl)
+```
+
+
+```{r, message=FALSE}
+y_predict <- predict(mdl, d, type="response")
+y_true    <- d$present
+
+range(y_predict)
+```
+
+
+```{r, message=FALSE}
+range(y_true)
+```
+
+
+## Generalized Linear Model (GLM)
+
+```{r}
+# fit a generalized linear model with a binomial logit link function
+mdl <- glm(present ~ ., family = binomial(link="logit"), data = d)
+summary(mdl)
+```
+
+
+```{r, message=FALSE}
+y_predict <- predict(mdl, d, type="response")
+
+range(y_predict)
+```
+
+
+```{r}
+# show term plots
+termplot(mdl, partial.resid = TRUE, se = TRUE, main = F)
+```
+
+
+## Generalized Additive Model (GAM)
+
+```{r, message=FALSE}
+librarian::shelf(mgcv)
+```
+
+```{r}
+# fit a generalized additive model with smooth predictors
+mdl <- mgcv::gam(
+  formula = present ~ s(WC_alt) + s(WC_bio1) + 
+    s(WC_bio12) + s(ER_tri) + s(ER_topoWet) + s(lon) + s(lat), 
+  family = binomial, data = d)
+summary(mdl)
+```
+
+### GAM Term Plots
+
+```{r}
+# show term plots
+plot(mdl, scale=0)
+```
+
+## Question
+
+Which GAM environmental variables, and even range of values, seem to contribute most towards presence (above 0 response) versus absence (below 0 response)?
+
+**Answer:** The GAM shows that all environmental variables are statistically significant and contribute a lot to presence. Latitude and ER_topoWet appear to contribute the most to presence. 
+
+
+## Maxtent (maximum entropy)
+
+```{r, message=FALSE}
+# load extra packages
+librarian::shelf(
+  maptools, sf)
+
+# show version of maxent
+maxent()
+```
+
+
+```{r}
+# get environmental rasters
+# NOTE: the first part of Lab 1. SDM - Explore got updated to write this clipped environmental raster stack
+env_stack_grd <- file.path(dir_data, "env_stack.grd")
+env_stack <- stack(env_stack_grd)
+plot(env_stack, nc=2)
+```
+
+### Maxtent model output
+
+```{r, warning=FALSE, message=FALSE}
+# get presence-only observation points (maxent extracts raster values for you)
+obs_geo <- file.path(dir_data, "obs.geojson")
+obs_sp <- read_sf(obs_geo) %>% 
+  sf::as_Spatial() # maxent prefers sp::SpatialPoints over newer sf::sf class
+
+# fit a maximum entropy model
+mdl <- maxent(env_stack, obs_sp)
+```
+
+### Maxtent variable contribution plot
+
+```{r}
+# plot variable contributions per predictor
+plot(mdl)
+```
+
+### Maxtent term plots
+
+```{r}
+# plot term plots
+response(mdl)
+```
+
+
+```{r}
+# predict
+y_predict <- predict(env_stack, mdl) #, ext=ext, progress='')
+
+plot(y_predict, main='Maxent, raw prediction')
+data(wrld_simpl, package="maptools")
+plot(wrld_simpl, add=TRUE, border='dark grey')
+```
+
+## Question
+
+Which Maxent environmental variables, and even range of values, seem to contribute most towards presence (closer to 1 response) and how might this differ from the GAM results?
+
+**Answer:** WC_alt, WC_bio1, and WC_bio12 seem to contribute the most toward presence, while ER_tri and ER_topoWet seem to contribute the least. Important to note that WC_bio1 contributes far more than any other variables (greater than 60%). This differs significantly from the GAM results because....
+
+# References
+
+1. Chamberlain, Michael J., et al. “Spatial-Use Patterns, Movements, and Interactions among Adult Coyotes in Central Mississippi.” Canadian Journal of Zoology, vol. 78, no. 12, Dec. 2000, pp. 2087–95. DOI.org (Crossref), https://doi.org/10.1139/z00-154.
+
+2. Gese, Eric M., et al. “Home Range and Habitat Use of Coyotes in Southeastern Colorado.” The Journal of Wildlife Management, vol. 52, no. 4, Oct. 1988, p. 640. DOI.org (Crossref), https://doi.org/10.2307/3800923.
+
+3. Hinton, Joseph W., et al. “Space Use and Habitat Selection by Resident and Transient Coyotes (Canis Latrans).” PLOS ONE, edited by Marco Apollonio, vol. 10, no. 7, July 2015, p. e0132203. DOI.org (Crossref), https://doi.org/10.1371/journal.pone.0132203.
+
 
